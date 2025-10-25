@@ -62,47 +62,45 @@ def root():
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     try:
-        # Read CSV safely and handle encodings/index issues
+        # ✅ Read CSV properly and prevent index issues
         df = pd.read_csv(file.file, encoding="utf-8", index_col=False)
         print(f"🧾 Uploaded CSV columns: {list(df.columns)}")
 
-        # Normalize column names (case-insensitive matching)
+        # ✅ Normalize column names
         df.columns = df.columns.str.strip().str.lower()
-        normalized_features = [c.lower().strip() for c in feature_order]
+        feature_order_lower = [c.lower().strip() for c in feature_order]
 
-        # Fill missing columns
-        missing_cols = [c for c in normalized_features if c not in df.columns]
-        extra_cols = [c for c in df.columns if c not in normalized_features]
-
-        if missing_cols:
-            print(f"⚠️ Missing columns: {missing_cols}")
-            for col in missing_cols:
+        # ✅ Add missing columns with 0
+        for col in feature_order_lower:
+            if col not in df.columns:
                 df[col] = 0
 
-        if extra_cols:
-            print(f"ℹ️ Ignoring extra columns: {extra_cols}")
+        # ✅ Keep only required columns
+        df = df[feature_order_lower]
 
-        # Reorder columns according to your feature_order.json
-        df = df[[c for c in normalized_features if c in df.columns]]
+        # ✅ Convert all data safely to float (core fix)
+        for c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-        # Convert all data to float safely
-        df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
+        if df.empty or not np.isfinite(df.to_numpy()).any():
+            raise ValueError("Uploaded CSV is empty or non-numeric.")
 
-        # Run predictions
+        print(f"✅ Final dataframe shape: {df.shape}")
+
+        # ✅ Predictions
         rf_pred = rf_model.predict_proba(df)[:, 1]
         xgb_pred = xgb_model.predict_proba(df)[:, 1]
         svm_pred = svm_model.decision_function(df)
         iso_pred = -iso_model.score_samples(df)
 
-        # Autoencoder prediction
+        # ✅ Autoencoder
         scaled_data = scaler.transform(df)
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # Ensemble average score
+        # ✅ Ensemble score
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
-        # Build structured output
         results = [
             {"Patient": int(i + 1), "Risk_Score": float(s), "High_Risk": bool(s > 0.5)}
             for i, s in enumerate(ensemble_score)
