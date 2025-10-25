@@ -72,10 +72,10 @@ async def predict(file: UploadFile = File(...)):
         if df.empty:
             return {"status": "error", "message": "Uploaded CSV is empty."}
 
-        # ✅ Ensure all column names are stripped and matched
+        # ✅ Clean column names
         df.columns = [c.strip() for c in df.columns]
 
-        # ✅ Handle missing and extra columns
+        # ✅ Handle missing & extra columns
         missing_cols = [c for c in feature_order if c not in df.columns]
         extra_cols = [c for c in df.columns if c not in feature_order]
 
@@ -89,31 +89,26 @@ async def predict(file: UploadFile = File(...)):
         safe_feature_order = [col for col in feature_order if col != "target"]
         df = df[safe_feature_order]
 
-        # ✅ Convert to numeric and fill any NaN
+        # ✅ Convert all to numeric values
         df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+        # ✅ Convert to NumPy for model compatibility
+        X = df.to_numpy().astype(float)
 
         print("✅ Data prepared for prediction")
 
-        # ✅ Convert dataframe to numpy for model compatibility
-X = df.to_numpy().astype(float)
+        # ✅ Run all model predictions
+        rf_pred = rf_model.predict_proba(X)[:, 1]
+        xgb_pred = xgb_model.predict_proba(X)[:, 1]
+        svm_pred = svm_model.decision_function(X)
+        iso_pred = -iso_model.score_samples(X)
 
-# ✅ Safe predictions
-rf_pred = rf_model.predict_proba(X)[:, 1]
-xgb_pred = xgb_model.predict_proba(X)[:, 1]
-
-# Some SVMs fail with feature names, so we use array input
-svm_pred = svm_model.decision_function(X)
-
-# Isolation Forest expects numpy too
-iso_pred = -iso_model.score_samples(X)
-
-
-        # ✅ Autoencoder prediction
-        scaled_data = scaler.transform(df)
+        # ✅ Autoencoder
+        scaled_data = scaler.transform(X)
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # ✅ Ensemble final score
+        # ✅ Ensemble score
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
         results = [
@@ -126,6 +121,7 @@ iso_pred = -iso_model.score_samples(X)
     except Exception as e:
         print(f"❌ Prediction Error: {e}")
         return {"status": "error", "message": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
