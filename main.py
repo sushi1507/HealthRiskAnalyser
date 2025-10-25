@@ -64,15 +64,18 @@ async def predict(file: UploadFile = File(...)):
     try:
         import io
 
-        # ✅ Read the uploaded file properly
+        # ✅ Read uploaded CSV correctly
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content))
         print(f"🧾 Uploaded CSV columns: {list(df.columns)}")
 
-        if df.empty or not df.select_dtypes(include=[float, int]).shape[1]:
-            return {"status": "error", "message": "Uploaded CSV is empty or non-numeric."}
+        if df.empty:
+            return {"status": "error", "message": "Uploaded CSV is empty."}
 
-        # Handle missing/extra columns
+        # ✅ Ensure all column names are stripped and matched
+        df.columns = [c.strip() for c in df.columns]
+
+        # ✅ Handle missing and extra columns
         missing_cols = [c for c in feature_order if c not in df.columns]
         extra_cols = [c for c in df.columns if c not in feature_order]
 
@@ -80,25 +83,29 @@ async def predict(file: UploadFile = File(...)):
             print(f"⚠️ Missing columns: {missing_cols}")
             for col in missing_cols:
                 df[col] = 0
-
         if extra_cols:
             print(f"ℹ️ Ignoring extra columns: {extra_cols}")
 
         safe_feature_order = [col for col in feature_order if col != "target"]
         df = df[safe_feature_order]
 
-        # Predictions
+        # ✅ Convert to numeric and fill any NaN
+        df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+        print("✅ Data prepared for prediction")
+
+        # ✅ Run model predictions safely
         rf_pred = rf_model.predict_proba(df)[:, 1]
         xgb_pred = xgb_model.predict_proba(df)[:, 1]
         svm_pred = svm_model.decision_function(df)
         iso_pred = -iso_model.score_samples(df)
 
-        # Autoencoder
+        # ✅ Autoencoder prediction
         scaled_data = scaler.transform(df)
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # Ensemble
+        # ✅ Ensemble final score
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
         results = [
@@ -111,7 +118,6 @@ async def predict(file: UploadFile = File(...)):
     except Exception as e:
         print(f"❌ Prediction Error: {e}")
         return {"status": "error", "message": str(e)}
-
 
 if __name__ == "__main__":
     import uvicorn
