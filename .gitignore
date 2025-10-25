@@ -1,0 +1,13 @@
+# Ignore virtual environments
+tf215_env/
+tf_fix_env/
+.venv/
+venv/
+__pycache__/
+
+# Ignore model cache and system files
+*.pkl
+*.h5
+*.dll
+*.pyc
+.DS_Store
