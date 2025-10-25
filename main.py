@@ -62,12 +62,17 @@ def root():
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     try:
-        df = pd.read_csv(file.file)
+        # Read CSV safely and handle encodings/index issues
+        df = pd.read_csv(file.file, encoding="utf-8", index_col=False)
         print(f"🧾 Uploaded CSV columns: {list(df.columns)}")
 
-        # Handle missing/extra columns
-        missing_cols = [c for c in feature_order if c not in df.columns]
-        extra_cols = [c for c in df.columns if c not in feature_order]
+        # Normalize column names (case-insensitive matching)
+        df.columns = df.columns.str.strip().str.lower()
+        normalized_features = [c.lower().strip() for c in feature_order]
+
+        # Fill missing columns
+        missing_cols = [c for c in normalized_features if c not in df.columns]
+        extra_cols = [c for c in df.columns if c not in normalized_features]
 
         if missing_cols:
             print(f"⚠️ Missing columns: {missing_cols}")
@@ -77,23 +82,27 @@ async def predict(file: UploadFile = File(...)):
         if extra_cols:
             print(f"ℹ️ Ignoring extra columns: {extra_cols}")
 
-        safe_feature_order = [col for col in feature_order if col != "target"]
-        df = df[safe_feature_order]
+        # Reorder columns according to your feature_order.json
+        df = df[[c for c in normalized_features if c in df.columns]]
 
-        # Predictions
+        # Convert all data to float safely
+        df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
+
+        # Run predictions
         rf_pred = rf_model.predict_proba(df)[:, 1]
         xgb_pred = xgb_model.predict_proba(df)[:, 1]
         svm_pred = svm_model.decision_function(df)
         iso_pred = -iso_model.score_samples(df)
 
-        # Autoencoder
+        # Autoencoder prediction
         scaled_data = scaler.transform(df)
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # Ensemble
+        # Ensemble average score
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
+        # Build structured output
         results = [
             {"Patient": int(i + 1), "Risk_Score": float(s), "High_Risk": bool(s > 0.5)}
             for i, s in enumerate(ensemble_score)
@@ -104,6 +113,7 @@ async def predict(file: UploadFile = File(...)):
     except Exception as e:
         print(f"❌ Prediction Error: {e}")
         return {"status": "error", "message": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
