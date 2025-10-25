@@ -44,8 +44,17 @@ try:
     autoencoder_model = load_model(f"{model_dir}/autoencoder_model_compatible.h5", compile=False)
     scaler = joblib.load(f"{model_dir}/score_scaler.pkl")
 
-    with open(f"{model_dir}/feature_order.json") as f:
-        feature_order = json.load(f)
+    # ✅ Safer feature_order.json loading
+    try:
+        with open(f"{model_dir}/feature_order.json", "r") as f:
+            feature_order = json.load(f)
+        if not feature_order:
+            print("⚠️ feature_order.json is empty!")
+        else:
+            print("✅ feature_order.json loaded successfully with", len(feature_order), "features.")
+    except Exception as e:
+        print(f"❌ Failed to load feature_order.json: {e}")
+        feature_order = []
 
     print("✅ All models loaded successfully (RF, XGB, SVM, ISO, Autoencoder).")
 
@@ -53,7 +62,7 @@ except Exception as e:
     print(f"❌ Model loading error: {e}")
     feature_order, autoencoder_model = [], None
 
-# 🩺 Root endpoint for health check
+# 🩺 Root endpoint
 @app.get("/")
 def root():
     return {"message": "✅ Health Risk Analyzer API active!"}
@@ -64,7 +73,6 @@ async def predict(file: UploadFile = File(...)):
     try:
         import io
 
-        # ✅ Read uploaded CSV
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content))
         print(f"🧾 Uploaded CSV columns: {list(df.columns)}")
@@ -72,24 +80,20 @@ async def predict(file: UploadFile = File(...)):
         if df.empty:
             return {"status": "error", "message": "Uploaded CSV is empty or invalid."}
 
-        # ✅ Clean up column names (remove spaces and hidden chars)
         df.columns = [c.strip() for c in df.columns]
-
-        # ✅ Align features with model’s expected order
         safe_feature_order = [col for col in feature_order if col != "target"]
 
         print("📋 Feature order from model:", safe_feature_order)
         print("📋 Columns in uploaded CSV:", list(df.columns))
 
-        # Add missing columns (fill as 0)
+        # ✅ Add missing cols
         for col in safe_feature_order:
             if col not in df.columns:
                 df[col] = 0
 
-        # Filter only valid model features
-        df = df[[col for col in df.columns if col in safe_feature_order]]
+        # ✅ Keep only valid cols (in correct order)
+        df = df[[col for col in safe_feature_order if col in df.columns]]
 
-        # ✅ Validate feature shape
         if df.shape[1] == 0:
             print("❌ No matching features found between CSV and model feature_order.")
             return {
@@ -97,25 +101,20 @@ async def predict(file: UploadFile = File(...)):
                 "message": "No matching features between uploaded CSV and model configuration."
             }
 
-        # ✅ Convert all to numeric safely
         df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
-
-        # ✅ Convert to NumPy for model compatibility
         X = df.to_numpy().astype(float)
         print(f"✅ Prepared data shape: {X.shape}")
 
-        # 🧠 Run all model predictions
+        # 🧠 Predictions
         rf_pred = rf_model.predict_proba(X)[:, 1]
         xgb_pred = xgb_model.predict_proba(X)[:, 1]
         svm_pred = svm_model.decision_function(X)
         iso_pred = -iso_model.score_samples(X)
 
-        # ✅ Autoencoder
         scaled_data = scaler.transform(X)
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # ✅ Ensemble prediction
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
         results = [
@@ -128,7 +127,6 @@ async def predict(file: UploadFile = File(...)):
     except Exception as e:
         print(f"❌ Prediction Error: {e}")
         return {"status": "error", "message": str(e)}
-
 
 if __name__ == "__main__":
     import uvicorn
