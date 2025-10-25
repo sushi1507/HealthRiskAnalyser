@@ -94,11 +94,19 @@ async def predict(file: UploadFile = File(...)):
 
         print("✅ Data prepared for prediction")
 
-        # ✅ Run model predictions safely
-        rf_pred = rf_model.predict_proba(df)[:, 1]
-        xgb_pred = xgb_model.predict_proba(df)[:, 1]
-        svm_pred = svm_model.decision_function(df)
-        iso_pred = -iso_model.score_samples(df)
+        # ✅ Convert dataframe to numpy for model compatibility
+X = df.to_numpy().astype(float)
+
+# ✅ Safe predictions
+rf_pred = rf_model.predict_proba(X)[:, 1]
+xgb_pred = xgb_model.predict_proba(X)[:, 1]
+
+# Some SVMs fail with feature names, so we use array input
+svm_pred = svm_model.decision_function(X)
+
+# Isolation Forest expects numpy too
+iso_pred = -iso_model.score_samples(X)
+
 
         # ✅ Autoencoder prediction
         scaled_data = scaler.transform(df)
