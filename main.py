@@ -64,40 +64,47 @@ async def predict(file: UploadFile = File(...)):
     try:
         import io
 
-        # ✅ Read uploaded CSV correctly
+        # ✅ Read uploaded CSV
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content))
         print(f"🧾 Uploaded CSV columns: {list(df.columns)}")
 
         if df.empty:
-            return {"status": "error", "message": "Uploaded CSV is empty."}
+            return {"status": "error", "message": "Uploaded CSV is empty or invalid."}
 
-        # ✅ Clean column names
+        # ✅ Clean up column names (remove spaces and hidden chars)
         df.columns = [c.strip() for c in df.columns]
 
-        # ✅ Handle missing & extra columns
-        missing_cols = [c for c in feature_order if c not in df.columns]
-        extra_cols = [c for c in df.columns if c not in feature_order]
-
-        if missing_cols:
-            print(f"⚠️ Missing columns: {missing_cols}")
-            for col in missing_cols:
-                df[col] = 0
-        if extra_cols:
-            print(f"ℹ️ Ignoring extra columns: {extra_cols}")
-
+        # ✅ Align features with model’s expected order
         safe_feature_order = [col for col in feature_order if col != "target"]
-        df = df[safe_feature_order]
 
-        # ✅ Convert all to numeric values
+        print("📋 Feature order from model:", safe_feature_order)
+        print("📋 Columns in uploaded CSV:", list(df.columns))
+
+        # Add missing columns (fill as 0)
+        for col in safe_feature_order:
+            if col not in df.columns:
+                df[col] = 0
+
+        # Filter only valid model features
+        df = df[[col for col in df.columns if col in safe_feature_order]]
+
+        # ✅ Validate feature shape
+        if df.shape[1] == 0:
+            print("❌ No matching features found between CSV and model feature_order.")
+            return {
+                "status": "error",
+                "message": "No matching features between uploaded CSV and model configuration."
+            }
+
+        # ✅ Convert all to numeric safely
         df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
 
         # ✅ Convert to NumPy for model compatibility
         X = df.to_numpy().astype(float)
+        print(f"✅ Prepared data shape: {X.shape}")
 
-        print("✅ Data prepared for prediction")
-
-        # ✅ Run all model predictions
+        # 🧠 Run all model predictions
         rf_pred = rf_model.predict_proba(X)[:, 1]
         xgb_pred = xgb_model.predict_proba(X)[:, 1]
         svm_pred = svm_model.decision_function(X)
@@ -108,7 +115,7 @@ async def predict(file: UploadFile = File(...)):
         ae_recon = autoencoder_model.predict(scaled_data)
         ae_error = np.mean(np.square(scaled_data - ae_recon), axis=1)
 
-        # ✅ Ensemble score
+        # ✅ Ensemble prediction
         ensemble_score = (rf_pred + xgb_pred + svm_pred + iso_pred + ae_error) / 5
 
         results = [
