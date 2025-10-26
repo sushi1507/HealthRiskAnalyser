@@ -3,13 +3,13 @@ import pandas as pd
 import joblib, json, numpy as np, os, requests
 from tensorflow.keras.models import load_model
 
-app = FastAPI(title="Health Risk Analyzer API", version="2.0 - Stable")
+app = FastAPI(title="Health Risk Analyzer API", version="3.0")
 
-# ✅ Create model directory if missing
+# ✅ Model directory setup
 model_dir = os.path.join(os.getcwd(), "mmodels")
 os.makedirs(model_dir, exist_ok=True)
 
-# ✅ Direct download links (uc?id format)
+# ✅ Google Drive model links
 model_urls = {
     "rf_model.pkl": "https://drive.google.com/uc?id=1vdYZCmWM1-IYhDqjt3LLfd25Xsl8eRHV",
     "xgb_model.pkl": "https://drive.google.com/uc?id=1SYhCbOkbR6qjHJ9kMYJwqeXh27lBnuFp",
@@ -33,8 +33,8 @@ for fname, url in model_urls.items():
         except Exception as e:
             print(f"⚠️ Failed to download {fname}: {e}")
 
-# ✅ Load models safely
-def safe_load_model(path, loader, name):
+# ✅ Safe model loader
+def safe_load(path, loader, name):
     try:
         model = loader(path)
         print(f"✅ Loaded {name}")
@@ -43,20 +43,21 @@ def safe_load_model(path, loader, name):
         print(f"⚠️ Failed to load {name}: {e}")
         return None
 
-rf_model = safe_load_model(f"{model_dir}/rf_model.pkl", joblib.load, "Random Forest")
-xgb_model = safe_load_model(f"{model_dir}/xgb_model.pkl", joblib.load, "XGBoost")
-svm_model = safe_load_model(f"{model_dir}/svm_model.pkl", joblib.load, "SVM")
-iso_model = safe_load_model(f"{model_dir}/iso_model.pkl", joblib.load, "Isolation Forest")
-autoencoder_model = safe_load_model(f"{model_dir}/autoencoder.h5", lambda p: load_model(p, compile=False), "Autoencoder")
-scaler = safe_load_model(f"{model_dir}/scaler.pkl", joblib.load, "Scaler")
+rf_model = safe_load(f"{model_dir}/rf_model.pkl", joblib.load, "Random Forest")
+xgb_model = safe_load(f"{model_dir}/xgb_model.pkl", joblib.load, "XGBoost")
+svm_model = safe_load(f"{model_dir}/svm_model.pkl", joblib.load, "SVM")
+iso_model = safe_load(f"{model_dir}/iso_model.pkl", joblib.load, "Isolation Forest")
+autoencoder_model = safe_load(f"{model_dir}/autoencoder.h5", lambda p: load_model(p, compile=False), "Autoencoder")
+scaler = safe_load(f"{model_dir}/scaler.pkl", joblib.load, "Scaler")
 
-# ✅ Hardcoded feature list
+# ✅ Correct 25-feature input order from X_train_hybrid.csv
 feature_order = [
     "age",
     "resting_blood_pressure",
     "cholestoral",
     "Max_heart_rate",
     "oldpeak",
+    "target",
     "sex_Male",
     "chest_pain_type_Atypical angina",
     "chest_pain_type_Non-anginal pain",
@@ -78,14 +79,14 @@ feature_order = [
     "auto_score"
 ]
 
-print(f"✅ Loaded {len(feature_order)} features directly into memory.")
+print(f"✅ Feature order confirmed: {len(feature_order)} features")
 
-# 🩺 Health check
+# 🩺 Root endpoint
 @app.get("/")
 def root():
     return {"message": "✅ Health Risk Analyzer API active and stable."}
 
-# 🧠 Predict endpoint
+# 🧠 Prediction endpoint
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     try:
@@ -98,13 +99,13 @@ async def predict(file: UploadFile = File(...)):
         if df.empty:
             return {"status": "error", "message": "Uploaded CSV is empty."}
 
-        # ✅ Align columns
+        # ✅ Add missing columns
         for col in feature_order:
             if col not in df.columns:
                 df[col] = 0
+
         df = df[feature_order].apply(pd.to_numeric, errors="coerce").fillna(0)
         X = df.to_numpy().astype(float)
-
         print(f"✅ Data ready for prediction: shape={X.shape}")
 
         preds = []
@@ -131,7 +132,7 @@ async def predict(file: UploadFile = File(...)):
         if not preds:
             return {"status": "error", "message": "No models loaded successfully."}
 
-        # ✅ Ensemble average
+        # ✅ Ensemble
         ensemble = np.mean(np.vstack(preds), axis=0)
 
         results = [
